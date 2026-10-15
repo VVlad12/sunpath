@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#111111">
+  <title>Sun Path</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="stage">
+    <video id="video" playsinline muted></video>
+    <canvas id="scene" hidden></canvas>
+    <canvas id="overlay"></canvas>
+    <div id="crosshair" aria-hidden="true"></div>
+    <div id="edgeMarker" hidden aria-hidden="true">◀</div>
+  </div>
+
+  <header id="topbar" hidden>
+    <button id="periodBtn" class="pill">
+      <span id="periodName">Full year</span>
+      <span id="periodDates" class="muted"></span>
+    </button>
+    <button id="settingsBtn" class="icon-btn" aria-label="Settings">
+      <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M19.4 13a7.5 7.5 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.6 7.6 0 0 0-1.7-1L15 3h-4l-.4 2.9a7.6 7.6 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.5 7.5 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1a7.6 7.6 0 0 0 1.7 1L11 21h4l.4-2.9a7.6 7.6 0 0 0 1.7-1l2.5 1 2-3.5zM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z" transform="translate(-1 0)"/></svg>
+    </button>
+  </header>
+
+  <div id="calBanner" class="banner" hidden>
+    <p id="calText"></p>
+    <div class="row">
+      <button id="calCancel" class="btn ghost">Cancel</button>
+      <button id="calSet" class="btn primary">Set</button>
+    </div>
+  </div>
+
+  <footer id="hud" hidden>
+    <div id="readout" class="readout"></div>
+    <div class="actions">
+      <button id="freezeBtn" class="btn">Freeze</button>
+      <button id="calBtn" class="btn">Calibrate</button>
+      <button id="snapBtn" class="btn">Snapshot</button>
+      <button id="debugBtn" class="btn ghost">Debug</button>
+    </div>
+  </footer>
+
+  <!-- Start screen -->
+  <section id="start" class="screen">
+    <div class="start-card">
+      <svg class="logo" viewBox="0 0 64 64" width="64" height="64" aria-hidden="true">
+        <path d="M6 46 A26 26 0 0 1 58 46" fill="none" stroke="#ffb020" stroke-width="4" stroke-linecap="round"/>
+        <path d="M14 46 A18 12 0 0 1 50 46" fill="none" stroke="#6fd0ff" stroke-width="4" stroke-linecap="round"/>
+        <circle cx="32" cy="20" r="6" fill="#ffe680"/>
+        <line x1="2" y1="48" x2="62" y2="48" stroke="#fff" stroke-width="2"/>
+      </svg>
+      <h1>Sun Path</h1>
+      <p>Point your phone out of a window to see where the sun travels during a period or a season.
+        If the band crosses open sky, the room gets sun.</p>
+      <button id="startBtn" class="btn primary big">Start camera</button>
+      <button id="demoBtn" class="btn ghost big">Demo (no camera)</button>
+      <p class="fine">Uses the camera, compass and location. Nothing leaves your phone.</p>
+    </div>
+  </section>
+
+  <!-- Period sheet -->
+  <section id="periodSheet" class="sheet" hidden>
+    <div class="sheet-head"><h2>Period</h2><button class="icon-btn close" data-close aria-label="Close">✕</button></div>
+    <div id="presetChips" class="chips"></div>
+    <div id="customRow" class="custom">
+      <label>From <span class="date-in"><input id="fromD" type="number" min="1" max="31"><select id="fromM"></select></span></label>
+      <label>To <span class="date-in"><input id="toD" type="number" min="1" max="31"><select id="toM"></select></span></label>
+    </div>
+    <div class="opt"><span>Hour lines</span><input id="optHours" type="checkbox"></div>
+    <div class="opt"><span>Hour lines time</span>
+      <select id="optHourMode"><option value="clock">Clock time (with DST)</option><option value="standard">Standard time (no DST)</option></select>
+    </div>
+    <div class="opt"><span>Monthly paths (21st)</span><input id="optMonths" type="checkbox"></div>
+    <div class="opt"><span>Current sun</span><input id="optSun" type="checkbox"></div>
+    <div class="opt"><span>Band opacity</span><input id="optAlpha" type="range" min="0.05" max="0.7" step="0.05"></div>
+    <p class="legend"><i class="sw high"></i>Highest path <i class="sw low"></i>Lowest path <i class="sw band"></i>Sun can be here</p>
+  </section>
+
+  <!-- Settings sheet -->
+  <section id="settingsSheet" class="sheet" hidden>
+    <div class="sheet-head"><h2>Calibration &amp; location</h2><button class="icon-btn close" data-close aria-label="Close">✕</button></div>
+
+    <h3>North correction <output id="offsetOut"></output></h3>
+    <input id="offsetIn" type="range" min="-45" max="45" step="0.5">
+    <p class="hint">Compasses drift indoors. Best fix: point at the real sun and tap <b>Calibrate with sun</b>.
+      This also corrects magnetic declination (≈ +3° in Switzerland).</p>
+    <button id="calSunBtn" class="btn">Calibrate with sun</button>
+
+    <h3>Field of view <output id="fovOut"></output></h3>
+    <input id="fovIn" type="range" min="30" max="100" step="0.5">
+    <p class="hint">Across the long side of the camera image. Calibrate once: aim at a distant object, then turn until it reaches the edge marker.</p>
+    <button id="calFovBtn" class="btn">Calibrate field of view</button>
+
+    <h3>Location</h3>
+    <div class="loc">
+      <label>Lat <input id="latIn" type="number" step="0.0001"></label>
+      <label>Lon <input id="lonIn" type="number" step="0.0001"></label>
+    </div>
+    <div class="row">
+      <button id="gpsBtn" class="btn">Use GPS</button>
+      <button id="locApply" class="btn">Apply</button>
+    </div>
+    <p id="locInfo" class="hint"></p>
+
+    <div class="row spaced">
+      <button id="resetBtn" class="btn ghost">Reset calibration</button>
+      <button id="updateBtn" class="btn ghost">Check for update</button>
+    </div>
+    <p class="hint" id="versionInfo"></p>
+  </section>
+
+  <div id="debug" hidden><pre id="debugInfo"></pre><pre id="debugLog"></pre></div>
+  <div id="toast" hidden></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

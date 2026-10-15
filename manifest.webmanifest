@@ -1,0 +1,16 @@
+{
+  "name": "Sun Path",
+  "short_name": "Sun Path",
+  "description": "Camera overlay of the sun's path for a period or season, to check if a room gets sunlight.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "portrait",
+  "background_color": "#0d0d0f",
+  "theme_color": "#111111",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
