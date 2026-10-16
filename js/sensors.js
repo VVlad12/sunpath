@@ -18,48 +18,53 @@ export async function startCamera(video) {
 }
 
 /**
- * Stream orientation matrices to onMatrix(cols, source).
- * Prefers AbsoluteOrientationSensor (fused rotation vector, same as native apps),
- * falls back to the deviceorientationabsolute event.
+ * Stream orientation matrices to onMatrix(cols, source). Both Chrome APIs are started
+ * together and the caller picks: AbsoluteOrientationSensor (fused rotation vector, the
+ * same data native compass apps use) and the deviceorientationabsolute event.
+ * Both are referenced to magnetic north.
  */
 export function startOrientation(onMatrix, log = () => {}) {
-  let stopped = false;
-  let stop = () => { stopped = true; };
+  const stops = [];
 
-  const fallback = () => {
-    if (stopped) return;
-    const evName = 'ondeviceorientationabsolute' in window ? 'deviceorientationabsolute' : 'deviceorientation';
-    log(`Orientation: using ${evName} event`);
-    const handler = (e) => {
-      if (e.alpha == null) return;
-      if (evName === 'deviceorientation' && !e.absolute) return; // not compass-referenced
-      const angle = (screen.orientation && screen.orientation.angle) || 0;
-      onMatrix(eulerToCols(e.alpha, e.beta, e.gamma, angle), evName);
-    };
-    window.addEventListener(evName, handler);
-    stop = () => window.removeEventListener(evName, handler);
+  // Event API (no permission prompt on Android Chrome).
+  const evName = 'ondeviceorientationabsolute' in window ? 'deviceorientationabsolute' : 'deviceorientation';
+  const handler = (e) => {
+    if (e.alpha == null) return;
+    if (evName === 'deviceorientation' && !e.absolute) return; // not compass-referenced
+    const angle = (screen.orientation && screen.orientation.angle) || 0;
+    onMatrix(eulerToCols(e.alpha, e.beta, e.gamma, angle), evName);
   };
+  window.addEventListener(evName, handler);
+  stops.push(() => window.removeEventListener(evName, handler));
+  log(`Orientation: listening to ${evName}`);
 
+  // Generic Sensor API.
   if ('AbsoluteOrientationSensor' in window) {
-    try {
-      const sensor = new AbsoluteOrientationSensor({ frequency: 60, referenceFrame: 'screen' });
-      sensor.addEventListener('reading', () => onMatrix(quatToCols(sensor.quaternion), 'AbsoluteOrientationSensor'));
-      sensor.addEventListener('error', (e) => {
-        log(`AbsoluteOrientationSensor error: ${e.error && e.error.name}: ${e.error && e.error.message}`);
-        sensor.stop();
-        fallback();
-      });
-      sensor.start();
-      log('Orientation: AbsoluteOrientationSensor started');
-      stop = () => sensor.stop();
-    } catch (err) {
-      log(`AbsoluteOrientationSensor unavailable: ${err.message}`);
-      fallback();
+    const begin = () => {
+      try {
+        const sensor = new AbsoluteOrientationSensor({ frequency: 60, referenceFrame: 'screen' });
+        sensor.addEventListener('reading', () => onMatrix(quatToCols(sensor.quaternion), 'AbsoluteOrientationSensor'));
+        sensor.addEventListener('error', (e) => {
+          log(`AbsoluteOrientationSensor error: ${e.error && e.error.name}: ${e.error && e.error.message}`);
+        });
+        sensor.start();
+        stops.push(() => sensor.stop());
+        log('Orientation: AbsoluteOrientationSensor started');
+      } catch (err) {
+        log(`AbsoluteOrientationSensor unavailable: ${err.name}: ${err.message}`);
+      }
+    };
+    if (navigator.permissions) {
+      Promise.all(['accelerometer', 'gyroscope', 'magnetometer'].map((name) =>
+        navigator.permissions.query({ name }).then((r) => `${name}=${r.state}`, () => `${name}=?`)
+      )).then((states) => { log(`Sensor permissions: ${states.join(', ')}`); begin(); });
+    } else {
+      begin();
     }
   } else {
-    fallback();
+    log('AbsoluteOrientationSensor not supported');
   }
-  return () => stop();
+  return () => stops.forEach((s) => s());
 }
 
 /** One-shot high-accuracy location. */

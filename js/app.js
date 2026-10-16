@@ -4,7 +4,7 @@ import { Camera, angleBetween } from './projection.js';
 import { startCamera, startOrientation, getLocation } from './sensors.js';
 import { OverlayRenderer, drawDemoScene } from './render.js';
 
-export const VERSION = '0.1.0';
+export const VERSION = '0.2.0';
 
 const $ = (id) => document.getElementById(id);
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -13,7 +13,8 @@ const FALLBACK_LOC = { lat: 47.3769, lon: 8.5417, label: 'Zürich (default)' };
 
 // ---------------------------------------------------------------- settings
 const DEFAULTS = {
-  headingOffset: 0,
+  headingOffset: 0,       // fine correction from sun calibration, deg
+  magDecl: null,          // magnetic declination, deg east; null = automatic
   fovLong: 67,
   periodId: 'year',
   custom: { from: { m: 11, d: 1 }, to: { m: 2, d: 28 } },
@@ -38,7 +39,6 @@ function saveSettings() {
 
 // ---------------------------------------------------------------- state
 const cam = new Camera();
-cam.headingOffset = settings.headingOffset;
 cam.fovLong = settings.fovLong;
 
 const overlay = new OverlayRenderer($('overlay'));
@@ -54,7 +54,9 @@ const state = {
   frozen: false,
   sensorSource: null,
   lastSensorAt: 0,
-  manualLook: false,     // drag to look (demo, or no sensor)
+  lastAosAt: 0,
+  sensorCounts: {},
+  manualLook: false,     // drag to look (demo mode only)
   yaw: 205, pitch: 22,
   cal: null,             // calibration step
   fps: 0,
@@ -114,6 +116,17 @@ async function start(mode) {
   $('hud').hidden = false;
 
   if (mode === 'camera') {
+    // Start the orientation sensor first, inside the tap, before any permission prompt.
+    state.lastSensorAt = performance.now() + 1500; // grace period before warning
+    startOrientation((m, src) => {
+      const now = performance.now();
+      state.sensorCounts[src] = (state.sensorCounts[src] || 0) + 1;
+      if (src === 'AbsoluteOrientationSensor') state.lastAosAt = now;
+      else if (now - state.lastAosAt < 500) return; // prefer the fused sensor when it runs
+      if (state.sensorSource !== src) { state.sensorSource = src; log(`Using readings from ${src}`); }
+      state.lastSensorAt = now;
+      if (!state.frozen) cam.setSensorMatrix(m);
+    }, log);
     try {
       await startCamera(video);
       const setSize = () => { cam.setVideoSize(video.videoWidth, video.videoHeight); log(`Video ${video.videoWidth}×${video.videoHeight}`); };
@@ -125,19 +138,6 @@ async function start(mode) {
       toast('Camera not available, switching to demo mode.');
       return switchToDemo();
     }
-    startOrientation((m, src) => {
-      if (state.frozen || state.manualLook) return;
-      cam.setSensorMatrix(m);
-      state.lastSensorAt = performance.now();
-      if (state.sensorSource !== src) { state.sensorSource = src; log(`First reading from ${src}`); }
-    }, log);
-    setTimeout(() => {
-      if (!state.lastSensorAt) {
-        state.manualLook = true;
-        toast('No orientation sensor found. Drag to look around.', 4500);
-        log('No orientation readings after 2.5 s → manual look');
-      }
-    }, 2500);
     locate();
   } else {
     switchToDemo();
@@ -147,6 +147,7 @@ async function start(mode) {
 function switchToDemo() {
   state.mode = 'demo';
   state.manualLook = true;
+  $('sensorWarn').hidden = true;
   video.hidden = true;
   sceneCanvas.hidden = false;
   cam.setVideoSize(0, 0);
@@ -174,7 +175,24 @@ function setLoc(lat, lon, label) {
   state.locLabel = label;
   updateSunNow();
   rebuild();
-  syncSettingsUI();
+  applyCalibration();
+}
+
+// ---------------------------------------------------------------- true north
+// The phone's compass points to magnetic north; Google Maps and this app add the
+// local magnetic declination to get true north.
+function declination() {
+  return settings.magDecl ?? autoDeclination();
+}
+function autoDeclination() {
+  const l = state.loc;
+  if (!l) return 0;
+  // Switzerland, 2026: roughly +2.5° (Geneva) to +3.5° (Graubünden). Half a degree off is harmless here.
+  if (l.lat > 45.5 && l.lat < 48.2 && l.lon > 5.5 && l.lon < 11) return 2.4 + (l.lon - 6) * 0.27;
+  return 0;
+}
+function autoDeclinationSource() {
+  return autoDeclination() ? '(estimate for Switzerland)' : '(unknown here: enter it from ngdc.noaa.gov or magnetic-declination.com)';
 }
 
 // ---------------------------------------------------------------- layout & loop
@@ -194,7 +212,8 @@ function frame(t) {
   lastT = t;
 
   if (state.mode) {
-    if (state.manualLook) cam.setYawPitch(state.yaw - settings.headingOffset, state.pitch);
+    if (state.manualLook) cam.setYawPitch(state.yaw - cam.headingOffset, state.pitch);
+    if (state.mode === 'camera') updateSensorWarning();
     if (state.mode === 'demo') drawDemoScene(sceneCanvas, cam, overlay.dpr, state.sunNow);
     overlay.draw(cam, state.geo, {
       hourLines: settings.hourLines,
@@ -209,21 +228,27 @@ function frame(t) {
 requestAnimationFrame(frame);
 setInterval(updateSunNow, 10000);
 
+function updateSensorWarning() {
+  const stale = performance.now() - state.lastSensorAt > 1500;
+  $('sensorWarn').hidden = !stale || state.frozen;
+}
+
 function updateReadout() {
   const f = cam.forward();
   const dir = COMPASS16[Math.round(f.az / 22.5) % 16];
   const loc = state.loc ? `${state.loc.lat.toFixed(3)}, ${state.loc.lon.toFixed(3)}` : 'locating…';
   const frozen = state.frozen ? ' · FROZEN' : '';
-  $('readout').textContent = `${Math.round(f.az)}° ${dir} · elev ${Math.round(f.el)}° · ${loc}${frozen}`;
+  $('readout').textContent = `Facing ${Math.round(f.az)}° ${dir} · elev ${Math.round(f.el)}° · ${loc}${frozen}`;
 }
 
 function updateDebug() {
   const m = cam.measuredForward(), f = cam.forward();
   $('debugInfo').textContent = [
     `Sun Path v${VERSION}  mode=${state.mode}  fps=${state.fps}`,
-    `orientation: ${state.sensorSource || (state.manualLook ? 'manual drag' : 'waiting…')}`,
-    `measured az ${m.az.toFixed(1)}  el ${m.el.toFixed(1)}  roll ${cam.roll().toFixed(1)}`,
-    `corrected az ${f.az.toFixed(1)}  offset ${settings.headingOffset.toFixed(1)}`,
+    `orientation: ${state.manualLook ? 'manual drag (demo)' : state.sensorSource || 'NO READINGS'}`,
+    `readings: ${Object.entries(state.sensorCounts).map(([k, v]) => `${k}=${v}`).join('  ') || 'none'}`,
+    `magnetic az ${m.az.toFixed(1)}  el ${m.el.toFixed(1)}  roll ${cam.roll().toFixed(1)}`,
+    `true az ${f.az.toFixed(1)}  = magnetic + decl ${declination().toFixed(1)} + fine ${settings.headingOffset.toFixed(1)}`,
     `fovLong ${cam.fovLong.toFixed(1)}°  f ${cam.f.toFixed(0)} css px`,
     `video ${cam.video ? `${cam.video.w}×${cam.video.h}` : '–'}  screen ${cam.width}×${cam.height} @${overlay.dpr}x`,
     `loc ${state.loc ? `${state.loc.lat.toFixed(5)}, ${state.loc.lon.toFixed(5)}` : '–'} (${state.locLabel})`,
@@ -267,7 +292,7 @@ function beginCal(kind) {
   if (kind === 'sun') {
     if (!state.sunNow || state.sunNow.el < 1) {
       state.cal = null; $('calBanner').hidden = true;
-      return toast('The sun is below the horizon now. Use the North correction slider instead.', 4500);
+      return toast('The sun is below the horizon now. Use the fine correction slider instead.', 4500);
     }
     $('calText').innerHTML = 'Put the <b>real sun</b> in the centre circle (look at the screen, not at the sun), then tap <b>Set</b>.';
     $('calSet').textContent = 'Set';
@@ -282,12 +307,12 @@ function setCal() {
   if (!c) return;
   if (c.kind === 'sun') {
     const m = cam.measuredForward();
-    let off = state.sunNow.az - m.az;
+    let off = state.sunNow.az - m.az - declination();
     off = ((off + 540) % 360) - 180;
     settings.headingOffset = Math.round(off * 10) / 10;
     applyCalibration();
     const dEl = state.sunNow.el - m.el;
-    toast(`North correction set to ${settings.headingOffset.toFixed(1)}°` +
+    toast(`Fine correction set to ${settings.headingOffset > 0 ? '+' : ''}${settings.headingOffset.toFixed(1)}°` +
       (Math.abs(dEl) > 3 ? `. Elevation is off by ${dEl.toFixed(1)}°; check the field of view.` : '.'), 5000);
     endCal();
   } else if (c.step === 1) {
@@ -316,7 +341,7 @@ function endCal() {
 }
 
 function applyCalibration() {
-  cam.headingOffset = settings.headingOffset;
+  cam.headingOffset = declination() + settings.headingOffset;
   cam.fovLong = settings.fovLong;
   cam.updateFocal();
   cam.applyOffset();
@@ -324,7 +349,6 @@ function applyCalibration() {
   syncSettingsUI();
 }
 
-$('calBtn').onclick = () => beginCal('sun');
 $('calSunBtn').onclick = () => beginCal('sun');
 $('calFovBtn').onclick = () => beginCal('fov');
 $('calSet').onclick = setCal;
@@ -429,6 +453,11 @@ $('optSun').onchange = (e) => { settings.sunNow = e.target.checked; saveSettings
 $('optAlpha').oninput = (e) => { settings.bandAlpha = +e.target.value; saveSettings(); };
 
 function syncSettingsUI() {
+  $('declIn').value = settings.magDecl ?? '';
+  $('declIn').placeholder = `auto ${autoDeclination().toFixed(1)}`;
+  $('declInfo').textContent = settings.magDecl == null
+    ? `Automatic: ${autoDeclination().toFixed(1)}° ${autoDeclinationSource()}.`
+    : `Manual: ${settings.magDecl.toFixed(1)}°. Clear the field for automatic.`;
   $('offsetIn').value = settings.headingOffset;
   $('offsetOut').textContent = `${settings.headingOffset > 0 ? '+' : ''}${settings.headingOffset.toFixed(1)}°`;
   $('fovIn').value = settings.fovLong;
@@ -437,6 +466,11 @@ function syncSettingsUI() {
   $('locInfo').textContent = state.loc ? `Using ${state.loc.lat.toFixed(4)}, ${state.loc.lon.toFixed(4)} (${state.locLabel}).` : 'No location yet.';
   $('versionInfo').textContent = `Sun Path v${VERSION}`;
 }
+$('declIn').onchange = (e) => {
+  const v = e.target.value.trim();
+  settings.magDecl = v === '' || isNaN(+v) ? null : Math.max(-30, Math.min(30, +v));
+  applyCalibration();
+};
 $('offsetIn').oninput = (e) => { settings.headingOffset = +e.target.value; applyCalibration(); };
 $('fovIn').oninput = (e) => { settings.fovLong = +e.target.value; applyCalibration(); };
 $('gpsBtn').onclick = () => { $('locInfo').textContent = 'Locating…'; locate(); };
@@ -449,9 +483,10 @@ $('locApply').onclick = () => {
 };
 $('resetBtn').onclick = () => {
   settings.headingOffset = DEFAULTS.headingOffset;
+  settings.magDecl = DEFAULTS.magDecl;
   settings.fovLong = DEFAULTS.fovLong;
   applyCalibration();
-  toast('Calibration reset.');
+  toast('Corrections reset.');
 };
 $('updateBtn').onclick = async () => {
   try {
@@ -471,5 +506,6 @@ if (new URLSearchParams(location.search).has('demo')) start('demo');
 if ('serviceWorker' in navigator && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
   navigator.serviceWorker.register('sw.js').catch((err) => log(`SW: ${err.message}`));
 }
-syncSettingsUI();
+$('reloadBtn').onclick = () => location.reload();
+applyCalibration();
 log(`Sun Path v${VERSION} loaded`);

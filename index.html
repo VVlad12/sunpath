@@ -36,11 +36,16 @@
     </div>
   </div>
 
+  <div id="sensorWarn" class="banner warn" hidden>
+    <p><b>No orientation readings.</b> The overlay can't follow the phone.
+      In Chrome, tap the icon left of the address → <b>Permissions</b> → allow <b>Motion sensors</b>, then reload.</p>
+    <div class="row"><button id="reloadBtn" class="btn primary">Reload</button></div>
+  </div>
+
   <footer id="hud" hidden>
     <div id="readout" class="readout"></div>
     <div class="actions">
       <button id="freezeBtn" class="btn">Freeze</button>
-      <button id="calBtn" class="btn">Calibrate</button>
       <button id="snapBtn" class="btn">Snapshot</button>
       <button id="debugBtn" class="btn ghost">Debug</button>
     </div>
@@ -86,10 +91,17 @@
   <section id="settingsSheet" class="sheet" hidden>
     <div class="sheet-head"><h2>Calibration &amp; location</h2><button class="icon-btn close" data-close aria-label="Close">✕</button></div>
 
-    <h3>North correction <output id="offsetOut"></output></h3>
+    <p class="hint">The overlay follows the phone's compass, corrected to true north like Google Maps.
+      Compare the "Facing" value with Google Maps. Only if they disagree, use the options below.</p>
+
+    <h3>Magnetic declination</h3>
+    <div class="loc"><label>Degrees east (+) or west (−) <input id="declIn" type="number" step="0.1" inputmode="decimal"></label></div>
+    <p id="declInfo" class="hint"></p>
+
+    <h3>Fine correction (optional) <output id="offsetOut"></output></h3>
     <input id="offsetIn" type="range" min="-45" max="45" step="0.5">
-    <p class="hint">Compasses drift indoors. Best fix: point at the real sun and tap <b>Calibrate with sun</b>.
-      This also corrects magnetic declination (≈ +3° in Switzerland).</p>
+    <p class="hint">Steel and electronics can bend the compass indoors. If the overlay is shifted sideways,
+      drag this slider, or on a sunny day point at the sun and tap <b>Calibrate with sun</b>.</p>
     <button id="calSunBtn" class="btn">Calibrate with sun</button>
 
     <h3>Field of view <output id="fovOut"></output></h3>
@@ -109,7 +121,7 @@
     <p id="locInfo" class="hint"></p>
 
     <div class="row spaced">
-      <button id="resetBtn" class="btn ghost">Reset calibration</button>
+      <button id="resetBtn" class="btn ghost">Reset corrections</button>
       <button id="updateBtn" class="btn ghost">Check for update</button>
     </div>
     <p class="hint" id="versionInfo"></p>

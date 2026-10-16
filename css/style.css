@@ -80,7 +80,7 @@ button, input, select { font: inherit; color: inherit; }
   backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.actions { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 
 .btn {
   min-height: 44px; padding: 10px 12px; border-radius: 12px; cursor: pointer;
@@ -100,6 +100,7 @@ button, input, select { font: inherit; color: inherit; }
   padding: 12px 14px;
 }
 .banner p { margin: 0 0 10px; }
+.banner.warn { border-color: #ff6b5a; }
 .row { display: flex; gap: 8px; }
 .row > .btn { flex: 1; }
 .row.spaced { margin-top: 18px; }
