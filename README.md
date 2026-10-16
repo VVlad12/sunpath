@@ -25,7 +25,12 @@ the highest and the lowest path of the selected period:
    On a cloudy day, use the **North correction** slider in Settings instead.
 4. Optional, once per phone: **Settings → Calibrate field of view** so that angles on screen match
    reality.
-5. **Freeze** holds the image so you can look at it without holding the phone steady.
+5. **Shade check** detects the sky in the camera image with simple colour rules (blue, or bright
+   white/grey and smooth). The band stays orange where it crosses open sky and turns dark and
+   hatched where a building, tree or the window frame blocks it. If some sky is shown as blocked
+   (an overcast or hazy sky), tap on it to teach its colour. **Show detected sky** tints what the
+   app considers sky in cyan, to check the detection.
+6. **Freeze** holds the image so you can look at it without holding the phone steady.
    **Snapshot** saves or shares the image with the overlay.
 
 To install it as an app: Chrome menu → **Add to Home screen**. It then works offline.
@@ -58,5 +63,6 @@ When you change any file, bump `VERSION` in `sw.js` (and `js/app.js`) so install
 | `js/projection.js` | Camera model: orientation matrix, pinhole projection, horizon |
 | `js/sensors.js` | Camera stream, orientation sensor, GPS |
 | `js/render.js` | Overlay drawing and the demo scene |
+| `js/segment.js` | Sky detection for the shade check |
 | `js/app.js` | UI, settings, calibration, snapshot |
 | `sw.js` | Offline cache |

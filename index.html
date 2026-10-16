@@ -43,9 +43,18 @@
   </div>
 
   <footer id="hud" hidden>
+    <div id="shadeCard" class="card" hidden>
+      <p><b>Shade check</b> &nbsp;<i class="sw sun"></i>sun reaches the room &nbsp;<i class="sw shade"></i>blocked</p>
+      <p class="hint">Point at the window and sweep slowly. If some sky shows as blocked, <b>tap on that sky</b> to teach its colour.</p>
+      <div class="row">
+        <button id="maskBtn" class="btn small">Show detected sky</button>
+        <button id="clearTapsBtn" class="btn small ghost">Forget taps</button>
+      </div>
+    </div>
     <div id="readout" class="readout"></div>
     <div class="actions">
       <button id="freezeBtn" class="btn">Freeze</button>
+      <button id="shadeBtn" class="btn">Shade check</button>
       <button id="snapBtn" class="btn">Snapshot</button>
       <button id="debugBtn" class="btn ghost">Debug</button>
     </div>
@@ -85,6 +94,7 @@
     <div class="opt"><span>Current sun</span><input id="optSun" type="checkbox"></div>
     <div class="opt"><span>Band opacity</span><input id="optAlpha" type="range" min="0.05" max="0.7" step="0.05"></div>
     <p class="legend"><i class="sw high"></i>Highest path <i class="sw low"></i>Lowest path <i class="sw band"></i>Sun can be here</p>
+    <p class="legend">In <b>Shade check</b> the band turns <i class="sw sun"></i>stays orange where the camera sees open sky and <i class="sw shade"></i>dark and hatched where something blocks it.</p>
   </section>
 
   <!-- Settings sheet -->

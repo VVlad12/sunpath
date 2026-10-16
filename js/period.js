@@ -59,6 +59,19 @@ export function buildGeometry({ lat, lon, period, hourMode = 'clock', monthLines
     band.push({ lo: enu(a.az, a.el), hi: enu(b.az, b.el), elLo: a.el, elHi: b.el });
   }
 
+  // Finer grid over the same band (about 1° of declination × 2° of hour angle) for the
+  // shade check, which colours each cell by what the camera sees there.
+  const nD = Math.max(2, Math.ceil((dMax - dMin) / 1));
+  const grid = { nH: band.length, nD: nD + 1, v: [], el: [] };
+  for (let j = 0; j <= nD; j++) {
+    const dec = dMin + ((dMax - dMin) * j) / nD;
+    for (let H = -180; H <= 180; H += 2) {
+      const p = altAz(lat, dec, H);
+      grid.v.push(enu(p.az, p.el));
+      grid.el.push(p.el);
+    }
+  }
+
   const arc = (decl) => {
     const pts = [];
     for (let H = -180; H <= 180; H += 1) {
@@ -138,7 +151,7 @@ export function buildGeometry({ lat, lon, period, hourMode = 'clock', monthLines
   }
 
   return {
-    band, edges, months, hours,
+    band, grid, edges, months, hours,
     dMax, dMin,
     nDays: days.length,
   };

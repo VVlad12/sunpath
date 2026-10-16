@@ -1,5 +1,5 @@
 // Offline cache. Bump VERSION whenever any file changes so phones pick up the update.
-const VERSION = 'sunpath-0.2.0';
+const VERSION = 'sunpath-0.3.0';
 const FILES = [
   './',
   'index.html',
@@ -10,6 +10,7 @@ const FILES = [
   'js/projection.js',
   'js/sensors.js',
   'js/render.js',
+  'js/segment.js',
   'manifest.webmanifest',
   'icons/icon-192.png',
   'icons/icon-512.png',

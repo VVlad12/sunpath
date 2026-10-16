@@ -10,6 +10,8 @@ const COL = {
   hour: 'rgba(255,255,255,0.85)',
   horizon: 'rgba(255,255,255,0.7)',
   sun: '#ffe680',
+  shadeCell: 'rgb(12, 12, 20)',
+  hatch: 'rgb(150, 150, 170)',
 };
 
 const COMPASS = { 0: 'N', 45: 'NE', 90: 'E', 135: 'SE', 180: 'S', 225: 'SW', 270: 'W', 315: 'NW' };
@@ -51,7 +53,8 @@ export class OverlayRenderer {
       clipPoly(l, sky);
       l.fillStyle = COL.band;
       const b = geo.band;
-      for (let i = 0; i < b.length - 1; i++) {
+      if (opts.sky) this.drawShadeCells(l, cam, geo.grid, opts.sky);
+      else for (let i = 0; i < b.length - 1; i++) {
         const c0 = b[i], c1 = b[i + 1];
         if (Math.max(c0.elHi, c1.elHi) < 0) continue;
         const p = [cam.project(c0.lo), cam.project(c0.hi), cam.project(c1.hi), cam.project(c1.lo)];
@@ -65,9 +68,20 @@ export class OverlayRenderer {
       l.restore();
       ctx.save();
       ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.globalAlpha = opts.bandAlpha ?? 0.3;
+      ctx.globalAlpha = opts.sky ? Math.max(0.5, opts.bandAlpha ?? 0.3) : opts.bandAlpha ?? 0.3;
       ctx.drawImage(this.layer, 0, 0);
       ctx.restore();
+    }
+
+    // Detected sky (test view).
+    if (opts.showMask && opts.sky) {
+      const img = opts.sky.maskImage();
+      if (img) {
+        ctx.save();
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(img, 0, 0, this.w, this.h);
+        ctx.restore();
+      }
     }
 
     // Lines above the horizon.
@@ -108,6 +122,48 @@ export class OverlayRenderer {
         label(ctx, cam, enu(opts.sunNow.az, opts.sunNow.el), 'now', COL.sun, -18);
       }
     }
+  }
+
+  /** Band cells coloured by the sky mask: sun where open sky, grey where blocked. */
+  drawShadeCells(l, cam, grid, sky) {
+    const { nH, nD, v, el } = grid;
+    const pts = new Array(v.length);
+    for (let k = 0; k < v.length; k++) pts[k] = el[k] > -2 ? cam.project(v[k]) : null;
+    const sun = [], shade = [];
+    for (let j = 0; j < nD - 1; j++) {
+      for (let i = 0; i < nH - 1; i++) {
+        const a = j * nH + i, b = a + 1, c = a + nH + 1, d = a + nH;
+        const pa = pts[a], pb = pts[b], pc = pts[c], pd = pts[d];
+        if (!pa || !pb || !pc || !pd) continue;
+        if (Math.max(el[a], el[b], el[c], el[d]) < 0) continue;
+        const cx = (pa[0] + pb[0] + pc[0] + pd[0]) / 4, cy = (pa[1] + pb[1] + pc[1] + pd[1]) / 4;
+        if (cx < -50 || cy < -50 || cx > cam.width + 50 || cy > cam.height + 50) continue;
+        const s = sky.at(cam, cx, cy);
+        (s === 0 ? shade : sun).push([pa, pb, pc, pd]);
+      }
+    }
+    const path = (cells) => {
+      l.beginPath();
+      for (const [pa, pb, pc, pd] of cells) {
+        l.moveTo(...pa); l.lineTo(...pb); l.lineTo(...pc); l.lineTo(...pd); l.closePath();
+      }
+    };
+    path(sun);
+    l.fillStyle = COL.band; l.strokeStyle = COL.band; l.lineWidth = 0.8;
+    l.fill(); l.stroke();
+    if (!shade.length) return;
+    path(shade);
+    l.fillStyle = COL.shadeCell; l.strokeStyle = COL.shadeCell;
+    l.fill(); l.stroke();
+    // Diagonal hatching so blocked parts read as "shade" at a glance.
+    l.save();
+    l.clip();
+    l.strokeStyle = COL.hatch; l.lineWidth = 2;
+    l.beginPath();
+    const W = cam.width, H = cam.height;
+    for (let x = -H; x < W; x += 12) { l.moveTo(x, 0); l.lineTo(x + H, H); }
+    l.stroke();
+    l.restore();
   }
 
   drawHorizon(cam) {
@@ -262,10 +318,10 @@ export function drawDemoScene(canvas, cam, dpr, sunNow) {
 
   // Window frame and mullion.
   ctx.lineJoin = 'round';
-  strokePoly(ctx, win, '#e9e4dc', 10);
+  strokePoly(ctx, win, '#bdb6aa', 10);
   const mid = (WINDOW.az0 + WINDOW.az1) / 2;
   const m = projectPoly(cam, [enu(mid, WINDOW.el0), enu(mid, WINDOW.el1)], false);
-  if (m) { ctx.beginPath(); ctx.moveTo(...m[0]); ctx.lineTo(...m[1]); ctx.strokeStyle = '#e9e4dc'; ctx.lineWidth = 7; ctx.stroke(); }
+  if (m) { ctx.beginPath(); ctx.moveTo(...m[0]); ctx.lineTo(...m[1]); ctx.strokeStyle = '#bdb6aa'; ctx.lineWidth = 7; ctx.stroke(); }
 }
 
 function rectOutline(az0, az1, el0, el1) {

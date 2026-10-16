@@ -80,7 +80,18 @@ button, input, select { font: inherit; color: inherit; }
   backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.actions { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.actions .btn { padding: 10px 4px; font-size: 14px; }
+.card {
+  background: var(--glass-strong); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 10px 12px; font-size: 14px;
+}
+.card p { margin: 0 0 6px; }
+.card .hint { margin: 0 0 8px; }
+.btn.small { min-height: 36px; padding: 6px 10px; font-size: 13px; }
+.sw.sun { height: 10px; background: rgba(255, 184, 48, 0.6); }
+.sw.shade { height: 10px; border: 1px solid rgba(255,255,255,0.4);
+  background: repeating-linear-gradient(45deg, #0c0c14 0 3px, #9696aa 3px 5px); }
 
 .btn {
   min-height: 44px; padding: 10px 12px; border-radius: 12px; cursor: pointer;

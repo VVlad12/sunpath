@@ -3,8 +3,9 @@ import { presets, fmtDay, buildGeometry } from './period.js';
 import { Camera, angleBetween } from './projection.js';
 import { startCamera, startOrientation, getLocation } from './sensors.js';
 import { OverlayRenderer, drawDemoScene } from './render.js';
+import { SkySegmenter } from './segment.js';
 
-export const VERSION = '0.2.0';
+export const VERSION = '0.3.0';
 
 const $ = (id) => document.getElementById(id);
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -42,6 +43,7 @@ const cam = new Camera();
 cam.fovLong = settings.fovLong;
 
 const overlay = new OverlayRenderer($('overlay'));
+const sky = new SkySegmenter();
 const video = $('video');
 const sceneCanvas = $('scene');
 
@@ -59,6 +61,9 @@ const state = {
   manualLook: false,     // drag to look (demo mode only)
   yaw: 205, pitch: 22,
   cal: null,             // calibration step
+  shade: false,          // shade check on
+  showMask: false,
+  lastSegAt: 0,
   fps: 0,
 };
 
@@ -215,7 +220,13 @@ function frame(t) {
     if (state.manualLook) cam.setYawPitch(state.yaw - cam.headingOffset, state.pitch);
     if (state.mode === 'camera') updateSensorWarning();
     if (state.mode === 'demo') drawDemoScene(sceneCanvas, cam, overlay.dpr, state.sunNow);
+    if (state.shade && t - state.lastSegAt > 100) {
+      sky.process(state.mode === 'demo' ? sceneCanvas : video, cam);
+      state.lastSegAt = t;
+    }
     overlay.draw(cam, state.geo, {
+      sky: state.shade ? sky : null,
+      showMask: state.showMask,
       hourLines: settings.hourLines,
       bandAlpha: settings.bandAlpha,
       sunNow: settings.sunNow ? state.sunNow : null,
@@ -252,6 +263,7 @@ function updateDebug() {
     `fovLong ${cam.fovLong.toFixed(1)}°  f ${cam.f.toFixed(0)} css px`,
     `video ${cam.video ? `${cam.video.w}×${cam.video.h}` : '–'}  screen ${cam.width}×${cam.height} @${overlay.dpr}x`,
     `loc ${state.loc ? `${state.loc.lat.toFixed(5)}, ${state.loc.lon.toFixed(5)}` : '–'} (${state.locLabel})`,
+    `shade check ${state.shade ? `on, ${sky.ms.toFixed(1)} ms/frame, ${sky.samples.length} taught colours` : 'off'}`,
     `sun now az ${state.sunNow?.az.toFixed(1)} el ${state.sunNow?.el.toFixed(1)}`,
     `period decl ${state.geo?.dMin.toFixed(2)} … ${state.geo?.dMax.toFixed(2)}`,
     `tz ${Intl.DateTimeFormat().resolvedOptions().timeZone}  UTC${-new Date().getTimezoneOffset() / 60 >= 0 ? '+' : ''}${-new Date().getTimezoneOffset() / 60}`,
@@ -264,10 +276,12 @@ let drag = null;
 $('overlay').addEventListener('pointerdown', (e) => {
   if (!state.manualLook) return;
   drag = { x: e.clientX, y: e.clientY, yaw: state.yaw, pitch: state.pitch };
+  state.dragMoved = false;
   $('overlay').setPointerCapture(e.pointerId);
 });
 $('overlay').addEventListener('pointermove', (e) => {
   if (!drag) return;
+  if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) > 6) state.dragMoved = true;
   const k = 57.2958 / cam.f;
   state.yaw = (drag.yaw - (e.clientX - drag.x) * k + 360) % 360;
   state.pitch = Math.max(-80, Math.min(85, drag.pitch + (e.clientY - drag.y) * k));
@@ -413,7 +427,29 @@ function openSheet(id) { closeSheets(); $(id).hidden = false; }
 for (const b of document.querySelectorAll('[data-close]')) b.onclick = closeSheets;
 $('periodBtn').onclick = () => { renderPeriodSheet(); openSheet('periodSheet'); };
 $('settingsBtn').onclick = () => { syncSettingsUI(); openSheet('settingsSheet'); };
-$('overlay').addEventListener('click', () => { if (!state.manualLook) closeSheets(); });
+$('overlay').addEventListener('click', (e) => {
+  const sheetOpen = [...document.querySelectorAll('.sheet')].some((s) => !s.hidden);
+  if (sheetOpen) return closeSheets();
+  if (state.dragMoved) { state.dragMoved = false; return; }
+  if (state.shade) {
+    const c = sky.teach(cam, e.clientX, e.clientY);
+    if (c) toast(`Sky colour learned (${sky.samples.length}). Similar areas now count as sky.`);
+  }
+});
+
+// ---------------------------------------------------------------- shade check
+$('shadeBtn').onclick = () => {
+  state.shade = !state.shade;
+  $('shadeBtn').classList.toggle('on', state.shade);
+  $('shadeCard').hidden = !state.shade;
+  if (!state.shade) { state.showMask = false; $('maskBtn').classList.remove('on'); }
+};
+$('maskBtn').onclick = () => {
+  state.showMask = !state.showMask;
+  $('maskBtn').classList.toggle('on', state.showMask);
+  $('maskBtn').textContent = state.showMask ? 'Hide detected sky' : 'Show detected sky';
+};
+$('clearTapsBtn').onclick = () => { sky.clearTaught(); toast('Taught sky colours cleared.'); };
 
 function renderPeriodSheet() {
   const lat = state.loc?.lat ?? FALLBACK_LOC.lat;
