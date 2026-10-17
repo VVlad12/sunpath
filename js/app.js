@@ -1,11 +1,11 @@
 import { sunPosition } from './solar.js';
 import { presets, fmtDay, buildGeometry } from './period.js';
-import { Camera, angleBetween } from './projection.js';
+import { Camera, angleBetween, yawBetween } from './projection.js';
 import { startCamera, startOrientation, getLocation } from './sensors.js';
 import { OverlayRenderer, drawDemoScene } from './render.js';
 import { SkySegmenter } from './segment.js';
 
-export const VERSION = '0.3.0';
+export const VERSION = '0.4.0';
 
 const $ = (id) => document.getElementById(id);
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -54,10 +54,22 @@ const state = {
   geo: null,
   sunNow: null,
   frozen: false,
-  sensorSource: null,
+  sensorSource: null,     // source currently driving the view
+  absSource: null,
   lastSensorAt: 0,
-  lastAosAt: 0,
   sensorCounts: {},
+  startedAt: 0,
+  latestRel: null, latestRelAt: 0,
+  // North: the view follows the gyro (relative sensor); its arbitrary north is tied to
+  // the compass once ("lock"), so magnetic disturbances no longer move the overlay.
+  north: {
+    mode: 'aligning',     // 'aligning' | 'locked' | 'absolute' (no gyro sensor: raw compass)
+    lockAz: 0,            // azimuth offset relative -> magnetic, deg
+    from: '',             // 'compass' | 'sun'
+    s: 0, c: 0, n: 0, until: 0,   // alignment accumulator
+    ls: 0, lc: 0,         // live compass offset (smoothed)
+    driftSince: 0,
+  },
   manualLook: false,     // drag to look (demo mode only)
   yaw: 205, pitch: 22,
   cal: null,             // calibration step
@@ -123,15 +135,9 @@ async function start(mode) {
   if (mode === 'camera') {
     // Start the orientation sensor first, inside the tap, before any permission prompt.
     state.lastSensorAt = performance.now() + 1500; // grace period before warning
-    startOrientation((m, src) => {
-      const now = performance.now();
-      state.sensorCounts[src] = (state.sensorCounts[src] || 0) + 1;
-      if (src === 'AbsoluteOrientationSensor') state.lastAosAt = now;
-      else if (now - state.lastAosAt < 500) return; // prefer the fused sensor when it runs
-      if (state.sensorSource !== src) { state.sensorSource = src; log(`Using readings from ${src}`); }
-      state.lastSensorAt = now;
-      if (!state.frozen) cam.setSensorMatrix(m);
-    }, log);
+    state.startedAt = performance.now();
+    beginAlign();
+    startOrientation({ onAbsolute, onRelative }, log);
     try {
       await startCamera(video);
       const setSize = () => { cam.setVideoSize(video.videoWidth, video.videoHeight); log(`Video ${video.videoWidth}×${video.videoHeight}`); };
@@ -181,6 +187,67 @@ function setLoc(lat, lon, label) {
   updateSunNow();
   rebuild();
   applyCalibration();
+}
+
+// ---------------------------------------------------------------- orientation
+function count(src) { state.sensorCounts[src] = (state.sensorCounts[src] || 0) + 1; }
+
+function drive(m, src) {
+  if (state.sensorSource !== src) { state.sensorSource = src; log(`View follows ${src}`); }
+  state.lastSensorAt = performance.now();
+  if (!state.frozen) cam.setSensorMatrix(m);
+}
+
+function onRelative(m, src) {
+  count(src);
+  state.latestRel = m; state.latestRelAt = performance.now();
+  if (state.north.mode === 'absolute') return;
+  drive(m, src);
+}
+
+function onAbsolute(m, src) {
+  count(src);
+  state.absSource = src;
+  const now = performance.now(), N = state.north;
+  if (now - state.latestRelAt > 300) {
+    // No gyro-only sensor: fall back to the raw compass orientation.
+    if (now - state.startedAt > 2000 && !state.latestRel && N.mode !== 'absolute') {
+      N.mode = 'absolute';
+      log('No relative sensor: using the compass directly (may drift indoors)');
+      applyCalibration();
+    }
+    if (N.mode === 'absolute') drive(m, src);
+    return;
+  }
+  // Offset between the gyro frame and the compass, right now.
+  const d = yawBetween(state.latestRel, m) * Math.PI / 180;
+  N.ls += (Math.sin(d) - N.ls) * 0.02;
+  N.lc += (Math.cos(d) - N.lc) * 0.02;
+  if (N.mode === 'aligning') {
+    N.s += Math.sin(d); N.c += Math.cos(d); N.n++;
+    if (N.n === 1 && !N.from) { N.lockAz = d * 180 / Math.PI; applyCalibration(); } // provisional
+    if (now > N.until && N.n >= 20) {
+      N.lockAz = Math.atan2(N.s, N.c) * 180 / Math.PI;
+      N.ls = Math.sin(N.lockAz * Math.PI / 180); N.lc = Math.cos(N.lockAz * Math.PI / 180);
+      N.mode = 'locked'; N.from = 'compass';
+      applyCalibration();
+      log(`North locked from compass (offset ${N.lockAz.toFixed(1)}°)`);
+    }
+  }
+}
+
+function beginAlign() {
+  const N = state.north;
+  if (N.mode === 'absolute') return;
+  Object.assign(N, { mode: 'aligning', s: 0, c: 0, n: 0, until: performance.now() + 1500, driftSince: 0 });
+}
+
+/** Current compass reading minus the locked north, deg (positive: compass says further clockwise). */
+function compassDrift() {
+  const N = state.north;
+  if (N.mode !== 'locked' || !(N.ls || N.lc)) return 0;
+  const live = Math.atan2(N.ls, N.lc) * 180 / Math.PI;
+  return ((live - N.lockAz + 540) % 360) - 180;
 }
 
 // ---------------------------------------------------------------- true north
@@ -247,19 +314,35 @@ function updateSensorWarning() {
 function updateReadout() {
   const f = cam.forward();
   const dir = COMPASS16[Math.round(f.az / 22.5) % 16];
-  const loc = state.loc ? `${state.loc.lat.toFixed(3)}, ${state.loc.lon.toFixed(3)}` : 'locating…';
+  const N = state.north;
+  let northTxt = '';
+  let attention = false;
+  if (state.mode === 'camera') {
+    if (N.mode === 'aligning') northTxt = ' · setting north…';
+    else if (N.mode === 'absolute') northTxt = ' · live compass';
+    else {
+      const d = compassDrift();
+      northTxt = ` · N ${N.from === 'sun' ? 'sun' : 'lock'} Δ${Math.abs(d).toFixed(0)}°`;
+      const now = performance.now();
+      if (Math.abs(d) > 8) { N.driftSince ||= now; attention = now - N.driftSince > 3000; }
+      else N.driftSince = 0;
+    }
+  }
   const frozen = state.frozen ? ' · FROZEN' : '';
-  $('readout').textContent = `Facing ${Math.round(f.az)}° ${dir} · elev ${Math.round(f.el)}° · ${loc}${frozen}`;
+  $('readout').textContent = `Facing ${Math.round(f.az)}° ${dir} · elev ${Math.round(f.el)}°${northTxt}${frozen}`;
+  $('alignBtn').hidden = state.mode !== 'camera' || N.mode === 'absolute';
+  $('alignBtn').classList.toggle('attention', attention);
 }
 
 function updateDebug() {
   const m = cam.measuredForward(), f = cam.forward();
   $('debugInfo').textContent = [
     `Sun Path v${VERSION}  mode=${state.mode}  fps=${state.fps}`,
-    `orientation: ${state.manualLook ? 'manual drag (demo)' : state.sensorSource || 'NO READINGS'}`,
+    `view follows: ${state.manualLook ? 'manual drag (demo)' : state.sensorSource || 'NO READINGS'}  compass: ${state.absSource || '–'}`,
     `readings: ${Object.entries(state.sensorCounts).map(([k, v]) => `${k}=${v}`).join('  ') || 'none'}`,
-    `magnetic az ${m.az.toFixed(1)}  el ${m.el.toFixed(1)}  roll ${cam.roll().toFixed(1)}`,
-    `true az ${f.az.toFixed(1)}  = magnetic + decl ${declination().toFixed(1)} + fine ${settings.headingOffset.toFixed(1)}`,
+    `north: ${state.north.mode} (${state.north.from || '–'})  lock ${state.north.lockAz.toFixed(1)}  compass now Δ ${compassDrift().toFixed(1)}`,
+    `sensor az ${m.az.toFixed(1)}  el ${m.el.toFixed(1)}  roll ${cam.roll().toFixed(1)}`,
+    `true az ${f.az.toFixed(1)}  = sensor + lock + decl ${declination().toFixed(1)} + fine ${settings.headingOffset.toFixed(1)}`,
     `fovLong ${cam.fovLong.toFixed(1)}°  f ${cam.f.toFixed(0)} css px`,
     `video ${cam.video ? `${cam.video.w}×${cam.video.h}` : '–'}  screen ${cam.width}×${cam.height} @${overlay.dpr}x`,
     `loc ${state.loc ? `${state.loc.lat.toFixed(5)}, ${state.loc.lon.toFixed(5)}` : '–'} (${state.locLabel})`,
@@ -320,14 +403,21 @@ function setCal() {
   const c = state.cal;
   if (!c) return;
   if (c.kind === 'sun') {
-    const m = cam.measuredForward();
-    let off = state.sunNow.az - m.az - declination();
-    off = ((off + 540) % 360) - 180;
-    settings.headingOffset = Math.round(off * 10) / 10;
-    applyCalibration();
-    const dEl = state.sunNow.el - m.el;
-    toast(`Fine correction set to ${settings.headingOffset > 0 ? '+' : ''}${settings.headingOffset.toFixed(1)}°` +
-      (Math.abs(dEl) > 3 ? `. Elevation is off by ${dEl.toFixed(1)}°; check the field of view.` : '.'), 5000);
+    const f = cam.forward();
+    const delta = ((state.sunNow.az - f.az + 540) % 360) - 180;
+    const dEl = state.sunNow.el - f.el;
+    const elNote = Math.abs(dEl) > 3 ? ` Elevation is off by ${dEl.toFixed(1)}°; check the field of view.` : '';
+    const N = state.north;
+    if (N.mode === 'absolute') {
+      settings.headingOffset = Math.round((settings.headingOffset + delta) * 10) / 10;
+      applyCalibration();
+      toast(`Fine correction set to ${settings.headingOffset > 0 ? '+' : ''}${settings.headingOffset.toFixed(1)}°.${elNote}`, 5000);
+    } else {
+      // Tie north to the sun instead of the compass: exact, and immune to magnetic disturbance.
+      N.lockAz += delta; N.mode = 'locked'; N.from = 'sun';
+      applyCalibration();
+      toast(`North set from the sun (moved ${delta > 0 ? '+' : ''}${delta.toFixed(1)}°).${elNote}`, 5000);
+    }
     endCal();
   } else if (c.step === 1) {
     c.v1 = cam.raw[2].map((v) => -v);
@@ -355,7 +445,8 @@ function endCal() {
 }
 
 function applyCalibration() {
-  cam.headingOffset = declination() + settings.headingOffset;
+  const lock = state.north.mode === 'absolute' ? 0 : state.north.lockAz;
+  cam.headingOffset = lock + declination() + settings.headingOffset;
   cam.fovLong = settings.fovLong;
   cam.updateFocal();
   cam.applyOffset();
@@ -543,5 +634,9 @@ if ('serviceWorker' in navigator && location.hostname !== 'localhost' && locatio
   navigator.serviceWorker.register('sw.js').catch((err) => log(`SW: ${err.message}`));
 }
 $('reloadBtn').onclick = () => location.reload();
+$('alignBtn').onclick = () => {
+  beginAlign();
+  toast('Setting north from the compass: hold still for 2 seconds, away from metal and electronics.', 3500);
+};
 applyCalibration();
 log(`Sun Path v${VERSION} loaded`);

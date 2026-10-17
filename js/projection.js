@@ -152,6 +152,21 @@ function mul(A, B) {
   return A.map((row) => [0, 1, 2].map((j) => row[0] * B[0][j] + row[1] * B[1][j] + row[2] * B[2][j]));
 }
 
+/**
+ * Azimuth rotation d (deg, clockwise) that best maps orientation `from` onto `to`
+ * (both device→world column matrices): to ≈ rotateAzimuth(from, d). Least squares over
+ * the horizontal parts of the three axes.
+ */
+export function yawBetween(from, to) {
+  let s = 0, c = 0;
+  for (let i = 0; i < 3; i++) {
+    const [ea, na] = from[i], [eb, nb] = to[i];
+    s += eb * na - nb * ea;
+    c += nb * na + eb * ea;
+  }
+  return Math.atan2(s, c) * DEG;
+}
+
 export function cross(a, b) {
   return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 }

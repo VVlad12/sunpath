@@ -55,3 +55,12 @@ test('quaternion and euler agree: phone upright facing east', () => {
   near(cam.forward().az, 90, 1e-6, 'faces east');
   near(cam.forward().el, 0, 1e-6, 'level');
 });
+
+test('yawBetween recovers the azimuth offset between two orientations', async () => {
+  const { yawBetween } = await import('../js/projection.js');
+  for (const [alpha, beta, gamma, d] of [[10, 80, 5, 37], [200, 30, -20, -12.5], [90, 95, 0, 170]]) {
+    const rel = eulerToCols(alpha, beta, gamma);
+    const abs = eulerToCols(alpha - d, beta, gamma); // alpha is counter-clockwise, azimuth clockwise
+    near(yawBetween(rel, abs), d, 1e-6, `offset ${d}`);
+  }
+});
